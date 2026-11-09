@@ -1,0 +1,13 @@
+{
+  "_note": "总结来源：session=会话模型写 summary.cloud.json（默认，不要 key）；api=脚本直连云端 API 写（需 key，可离线/无人值守）；local=本地端点写 summary.json 草稿（标未复核）；directSummary=正式总结优先直连模型一次调用（失败自动回落会话）",
+  "mode": "session",
+  "autoWriteRatio": 0.6,
+  "dailyWriteMax": 0,
+  "version": 9,
+  "updatedAt": "2026-11-09T03:10:07.650Z",
+  "enabled": false,
+  "directSummary": true,
+  "baseUrl": "http://127.0.0.1:11434",
+  "model": "qwen3:8b",
+  "apiKey": ""
+}

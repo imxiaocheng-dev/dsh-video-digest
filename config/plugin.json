@@ -1,0 +1,10 @@
+{
+  "note": "本文件覆盖 plugin/index.js 的 DEFAULTS；改完要重启 DSH 生效。serverMode=inproc 表示面板在宿主进程内直调（不占端口、不需要计划任务）；http 是老的独立 8791 进程模式。toolsZipUrl 填 GitHub Release 里 ffmpeg-9.0.2-win64.zip 的下载地址，首次运行会自动下载解压到数据目录 tools/；留空则需手动下载放到那里。",
+  "serverMode": "inproc",
+  "watchEnabled": true,
+  "watchMs": 60000,
+  "watchCooldownMs": 180000,
+  "watchPerHour": 12,
+  "preStepHint": true,
+  "toolsZipUrl": ""
+}

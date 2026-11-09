@@ -1,0 +1,878 @@
+# Changelog
+
+## [Unreleased]
+
+## [0.4.5] - 2026-10-30
+
+### Fixed
+
+- **The cell map was never written (video_zoom `cellId` never resolved).** `runStoryboard` ended with
+  a bare `return {` instead of `const result = {`, so `saveCells()` and the final `return result` were
+  unreachable dead code. It now assigns, awaits `saveCells`, and returns the result. `cellId` lookups
+  were broken for every storyboard since 0.4.4.
+- **Cell lookup by URL.** A remote video is addressed by URL but downloaded to a temp path; only one
+  of the two was stored, so the other always returned NOT FOUND. `saveCells` now takes aliases and
+  writes the same record under each.
+- **`spikeCuts` local-window median used the wrong indices** when `lo > 0`
+  (`slice(i - lo + 1, hi - lo)` indexes the whole array, not the neighbours), so a real cut could be
+  dropped.
+- **Bilibili DASH audio (PR #19, issue #18).** `formatSelector` now requires `[acodec!=none]` on the
+  progressive branch, and `fetchMedia` hands yt-dlp our ffmpeg so video+audio actually merge. The
+  manifest now separates "unmerged-dash" from "silent source" — cookies do not fix the former.
+- **`paused` false positives.** It was read straight from the DOM, and reported paused while the video
+  was playing (observed: 8.6 s of progress over 66 s of wall clock, then a jump to 01:24). Now three
+  signals must agree: `video.paused`, whether `currentTime` actually advanced, and a `staleMs` marker
+  so "really paused" is distinguishable from "cannot read". `rawPaused` keeps the DOM value.
+- **`waitForVideo` only waited when the source was unknown.** A video page being open is not the same
+  as a readable position; the wait loop was skipped in exactly the most common case (page open, play
+  not pressed). It now waits for `pos > 0.5 || playing` and reports `waitedSec`.
+- **Enabling `tts` mid-loop had no effect.** `samePlan` compared input/sessionId/segment/ramp but not
+  `tts`, and `loop.tts` was only assigned when creating a loop — so `speakNow` followed by
+  `lines + tts:true` resumed forever with `tts = null`. The loop never ran in TTS mode. Same for
+  `wakeOnLinesEmpty`.
+- **The same video opened twice on every cold start.** `ensureBrowser` checked `sameTarget()` right
+  after `launchBrowser` had already been handed the URL, while the tab was still `about:blank`, and
+  opened a second one. It now waits up to 4 s for the tab to load.
+- **Scheduled task name embedded the port**, so every port change left another task behind (two were
+  found on disk). The name is fixed; port-suffixed leftovers are cleaned on each launch.
+- **Edge path was hardcoded to the x86 location**, which does not exist on this machine and kills
+  auto-launch on Chrome-only setups. Both Edge locations plus both Chrome ones are now tried.
+
+### Added
+
+- **`chat.js` — a localhost chat box shared by the CLI and the plugin.** Host input boxes do not reach
+  disk while a tool call is blocking (measured: a message sent at 03:05:35 landed after the 03:05:52
+  turn), so this is the only channel that can be heard mid-wait. The wait loop polls it every 500 ms.
+- **`attachOnly`** — never launches a browser; returns an error if no position is readable. For users
+  who do not want the plugin touching their browser.
+- **`wakeOnLinesEmpty`** — with TTS on, a finished line used to mean silence until the user spoke;
+  this wakes once when the current segment runs out of pre-written lines.
+- **`at` accepts a transcript substring** instead of a number: the anchor is looked up, not guessed.
+  Hand-written seconds put one batch 58 s early, and the user saw words describing a shot that had
+  not happened yet.
+- **edge-tts neural voices with SAPI fallback.** `speak()` now tries edge-tts first
+  (`zh-CN-XiaoxuanNeural` and friends) and only falls back to SAPI when synthesis or playback fails.
+  `edgeVoiceFor()` maps `"Huihui"` / `"zh-CN-XiaoxuanNeural"` / nothing to a real neural name — before,
+  a neural name matched no SAPI voice and silently fell back to the system default, which is why
+  passing a voice changed nothing.
+
+### Changed
+
+- **Late tolerance 6 s → 3 s.** A dense batch at 7 s spacing drifted 9 s and never caught up; a line
+  is now dropped rather than pushed later, because a late line describes a shot that has moved on.
+- **`tts` and `spokenAloud` are reported in `loopStatus()`**, so "is the voice actually on" is
+  answerable instead of guesswork.
+
+
+### Added
+
+- **`video_watch` — the model watches and writes, the script speaks on cue.** Lines are a queue the
+  script fires from (`lines: [...]`), so the model never waits for a clock and never re-reads its own
+  line at the moment of speaking. `src/tts.js` voices them through the OS voice (SAPI via COM):
+  0 tokens, 0 seconds of model time. There is deliberately **no default cadence** — `speakEvery`,
+  how many lines per segment, and whether to speak at all are the caller's decision, and silence
+  is a valid one.
+- **Blocking waits that are conditions, not timers**: `waitUntil` (block until playback reaches a
+  position) and `waitForRefill` (block until the line stock drops below `refillBelow`, which stays
+  off by default).
+- **`nextLine`** returns one line at a time, so a delivered line reads as a message instead of a dump.
+
+### Changed
+
+- **Everything gives up when the playhead stops moving.** A blocking wait, the background loop and the
+  speaking script all had open-ended lifetimes: a backgrounded tab, a stalled buffer or a user who simply
+  walked away left them polling forever, holding the session. The idle limit is twice the longest batch
+  (a 5-minute batch means 10 minutes), overridable with `idleTimeoutSec`; the wait returns
+  `reason: "idle"` with where it stopped, the loop stops with `idle`, and the script exits.
+  The loop only counts it when the position is being read *freshly* and simply not moving — a timeline
+  that cannot be read at all is a different case (ask once, then stop), and must not be masked by this.
+  The loop only counts it when the position is being read *freshly* and simply not moving — a timeline
+  that cannot be read at all is a different case (ask once, then stop), and must not be masked by this.
+
+- **Finding the video is polled fast, and probing SMTC is not on the same clock.** The wait loop used to
+  sleep two seconds and *then* spawn the SMTC python probe, so one check could cost 2 s + the probe's own
+  latency — the user could already be 30 s into the video while it still insisted nothing was playing.
+  The browser (CDP, milliseconds) is now polled every 300 ms; SMTC every 2 s with a 1.5 s timeout. The
+  delivery wait and the speaking script dropped from 2 s / 1.2 s to 500 ms, so a line or an image lands
+  within half a second of its cue. Waiting time is now measured from the clock instead of counted in ticks.
+
+- **The look-ahead is measured from the playhead, not from the segment start** (`windowFor()`). Counting
+  segments only guarantees five minutes when the user is at a boundary; a 60 s batch plus a 120 s batch
+  is three minutes of coverage no matter how it is counted. The window now extends until
+  `pos + lookahead`, and both the loop and the one-shot path use the same function.
+
+- **The loop contract is in the tool description, not in someone's head.** Five rules — one batch per
+  call, write the lines for the named window immediately, anchor `at` on `frame@`, then block like an npm
+  publish (no timers, no background jobs, do not end the turn), repeat. Plus the speaking side: a line is
+  read only while playback and `at` agree within six seconds, late lines are dropped rather than read out,
+  consumed lines are deleted so a rewind cannot replay them, and two utterances are at least six seconds apart.
+
+- **`wait: true` now builds the look-ahead window before it blocks.** The buffer used to be one
+  background segment, kicked off after the current one and (by default) not at all — so the picture
+  the user needed at the end of the next batch was still being built when they got there, and there was
+  no moment at which lines could be written for it. Blocking now presupposes the future is ready: every
+  segment inside `lookahead` is built first (capped at four per call), and the reply names the window
+  (`[buffer] … 词就写这个区间`), so the lines cover exactly the same span the pictures do. When the call
+  is already due, prefetch moves back to the background so delivery stays fast; `prefetch: false` still
+  turns it off.
+
+- **One place decides what a storyboard run is** (`src/board.js`). `video_storyboard`, `video_zoom` and the
+  co-watch path each hand-wrote the `runStoryboard` defaults, and the copies had already drifted: only the
+  storyboard tool had `detail`, so co-watch was stuck at a hard-coded 80 characters per cell; the
+  "ocr when detail=high" rule existed in one of the three; zoom pinned `scanHeight` while the storyboard
+  tool let you pass it. The defaults live in one function now, which is why `detail` / `ocr` reached
+  `video_watch` without a second copy of anything. What stays per-kind is deliberate: the batch table
+  (minutes) is not the frame plan (density), and only co-watch has delivery timing.
+
+- **`mm:ss` had two implementations that disagreed at the boundary**: 59.6 s was `01:00` in one and
+  `00:60` in the other. One implementation, with a carry (`src/time.js`), plus a test for it.
+
+### Fixed
+
+- **Lines are pinned to a moment (`at`), and fired by playback position.** The script used to speak
+  one line every `speakEvery` *wall-clock* seconds, with lines keyed to a 60-second batch: four lines
+  written for 02:00–03:00 were all spent by 02:36, so the voice ran half a minute ahead of the picture
+  and the last line of the batch was never reached at all (observed in a real run: 02:26 / 02:38 /
+  02:50 / 03:03 …). Each line can now carry `at`, the second it describes; the loop asks "what is due
+  at *this position*" instead of "has N seconds passed". Pausing pauses the script, seeking moves it.
+  A line that is more than 10 seconds late is discarded rather than spoken over the wrong shot.
+
+- **`speakEvery` no longer doubles as the TTS cadence**, and a TTS loop no longer wakes the model at
+  batch boundaries: if nothing is due, the script stays quiet — deciding that there should be more words
+  is the model's job, not the clock's.
+
+- **The look-ahead is a duration now, not a segment count.** "Keep two batches ready" means two minutes
+  at the start of the ramp, where batches are 1/2/3 minutes — shorter than one slow build, so the buffer
+  was effectively nothing right when it mattered. `lookahead` (default 300 s) states how much *ready video*
+  must sit ahead of the playhead; short batches are compensated automatically (60+120+180 at the start,
+  300+300 once steady). `depth` still works when passed explicitly, for tests and for callers who really
+  want a segment count. `lookahead` had been declared in the tool spec for a while but never wired into the
+  loop — declared, documented, ignored; it is connected now.
+
+- **A grid never leaves a blank slot when the layout is what created it.** Asking for 5 cells picks a
+  2×3 layout, which left the bottom-right slot painted as padding — the same canvas, the same token,
+  one frame thrown away. Cell counts are now rounded *up* to the layout capacity (5 → 6, 7 → 9,
+  10 → 12) and the manifest says so (`6 cells (filled from 5 — …)`). Padding that comes from `minGap`
+  or a too-short window is left alone: that one is a fact about the material, not a rounding error.
+
+- **`wait: true` no longer loses a segment.** `lastDelivered` was written *before* the "not due yet"
+  return, so every silent call marked the current segment as delivered; the next call that reached
+  the due point inside its wait loop had its delivery suppressed and hung until the cap — the segment
+  arrived one call late. The bookkeeping now happens only on the delivery path, and a wait that
+  hits an already-delivered segment returns immediately instead of hanging.
+
+- **`src/index.js` unregistered its own session listener.** `disposers.push(off)` ran before
+  `const disposers` was declared, so it threw a TDZ ReferenceError that the surrounding `catch`
+  swallowed: the listener was registered, its disposer never was. The array is declared first now,
+  and a failure to hook `session/event` is logged instead of disappearing.
+
+- **`docs/WATCH.zh.md` repeated the Bilibili-subtitle section twice.**
+
+## [0.4.4] — 2026-10-29
+
+### Fixed
+
+- **`video_zoom` swallowed `minGap`, so every zoom ran at 1.2 s.** The parameter is in the tool spec and in
+  the validator, but `src/index.js` builds the storyboard options field by field and that list never included
+  it — declared, validated, never wired. Short-form editing is exactly where a small gap matters: asking for
+  4 cells across 1.6 s returned 2.
+
+  Reported with a reproduction (`video_zoom({ from: 12, to: 15, cells: 6, minGap: 0.4 })` → 2 cells instead
+  of 4). Now passed through, and the same call returns the cells the geometry allows.
+
+- **When `minGap` does trim the count, the plan line says so.** It printed the requested number at the top
+  (`16 cells`) and the real one at the bottom (`total 8 of 8`), which reads like a bug. It now prints
+  `4/6 cells (minGap-limited)`.
+
+### Added
+
+- **`video_zoom({ cellId })`** — reference a cell by number instead of copying timestamps. The last storyboard
+  writes `{cell: absolute from/to}` to the cache, so a zoom resolves `cellId: 3` to the cell labelled 3 even
+  after parameters change; it errors clearly (rather than guessing a window) when no map exists. Suggested in
+  issue #4: timestamps drift once you change the window or the file, and a reference that cannot be replayed
+  is not a reference.
+
+- **`planThresholds` is now configurable** (`musicLufs` / `musicSpeechRate` / `speechRateCut`), from issue #4.
+  The defaults (−18 LUFS / 1 char·s⁻¹ / 3 char·s⁻¹) were tuned on one master, and loudness spans 9 LU across
+  material — a constant that misfires on the next batch is worse than no constant. The values that actually
+  applied were already printed; now they can be overridden per call.
+
+- **Hard-coded subtitles now correct the transcript** when `detail: high`. ASR mishears names and particles
+  (「他也忘记。」 for a line that actually reads 「你连，也要忘记吗」); the burned-in text is the authority.
+  The pass is deliberately cheap: one detection pass over three full-resolution frames locates the subtitle
+  band (~3 s), then each sampled line is OCR'd as a band crop **without detection** — 0.26 s instead of 3.1 s.
+
+  It replaces text only when the OCR covers ≥60% of the ASR characters in order, and it trims the matched span
+  so the neighbouring line does not leak in. Measured on a music-video sample: 1 of 3 lines fixed, the rest
+  left alone. Runs locally, so **no extra tokens** — versus ~34,500 tokens if the model read the subtitles
+  frame by frame. Silently skipped when rapidocr is not installed, and it says so rather than pretending.
+
+### Docs
+
+- The `tokens=` figure now states its basis: `384 (est@384/img, DSH host billing; an API host bills by
+  pixels)`. Issue #4 was right that "384 token" is unreadable without saying who charges that — the real
+  pixel dimensions were already next to it.
+
+- Sponsor entry: `.github/FUNDING.yml` (custom link to the WeChat reward code) and a README section, so the
+  repo shows a Sponsor button without requiring GitHub Sponsors, which is impractical from mainland China.
+
+### Changed
+
+- **The OCR line says "spot-checked", not "verified".** It is 16 sampled lines, so the manifest now reads
+  `on-screen subs: spot-checked 16 lines, corrected 1: …` — anything that could be read as "the whole
+  transcript was checked" is wrong, and a test asserts it.
+
+- **URL sources say the correction ran on the low-res copy.** With a Bilibili link the OCR runs against the
+  downloaded 360p scan, where hardcoded subtitles are already blurry and `scale=1280` invents no detail. The
+  line now carries `[from the 360p scan copy]` instead of implying source-quality evidence.
+
+- Nothing is printed when the pass changed nothing — that is the expected default and only costs tokens.
+
+- Segments dropped as non-speech now say what they most likely are ("singing or music, NOT dialogue") and
+  that they are **excluded rather than guessed**.
+
+### Fixed
+
+- **No-key runs no longer claim ASR listened and found no speech** (contributed by @ggfgfgf-on, PR #16). When the cloud backend had no key, the
+  cache wrapper turned the `null` "not attempted" result into a truthy empty object, so the manifest said
+  `asr-empty` — "ASR ran and found no speech" — even though no request was sent. `withCache` now preserves
+  `null`/`undefined` and does not cache it; the key/local gate is shared by `transcribe()` and the manifest,
+  and a new `no-key` source says explicitly that transcription was **not attempted**. This is separate from
+  `asr-empty` (it really ran and returned zero segments), which still means "ran, heard nothing".
+
+
+
+## [0.4.3] — 2026-10-29
+
+### Headline: the ASR path was the weak spot
+
+Three failures, all reported by users within a day, all the same shape — **something we could have known was
+treated as something we could not**:
+
+1. **A local service was gated on a key it never checks.** `if (!key) return null` skipped transcription for
+   anyone running FunASR on their own machine, where `Authorization` is not even looked at.
+2. **The service started and was never stopped.** It sat at ~6.8 GB of commit charge and took the host down
+   three times during a video edit. It is now started on demand and asked to leave when the run ends.
+3. **A long scan could kill it mid-run.** The idle timer was armed at the *end* of a run, so a run that spent
+   longer than the window scanning found the endpoint gone.
+
+The runtime also moved from FunASR to **sherpa-onnx** (cold start 30 s → 5 s, 2.1 GB → 500 MB), and the model
+got newer — `paraformer-zh-2024-03-09` fixes homophones that previously needed a hotword.
+
+### Added
+
+- **Hotwords: a word list that biases decoding, so homophones stop winning.** `"hotwords": "像差 焦段 光圈"`
+  in `asr.json`, sent as a `hotword` form field. seaco_paraformer supports it natively. Measured on a lens
+  review: *"也就是所谓的**相差**"* → *"也就是所谓的**像差**"* with one word added, no other change.
+
+  This matters more than swapping models: the transcription was already fluent, the misses were homophones
+  (像差/相差) that no general model resolves without knowing the subject.
+
+  Server-side: `start-asr.cmd` now takes `ASR_BACKEND=sherpa|funasr`; `sherpa` is the default.
+
+### Changed
+
+- **The local ASR service now runs on sherpa-onnx by default.** Same HTTP contract, different runtime:
+  **cold start 30 s → 5 s** (measured through the plugin, model load alone 1.9 s), models **2.1 GB → 500 MB**,
+  no torch. The model also got newer: `paraformer-zh-2024-03-09` gets 「像差」 right without any hotword,
+  where the old one needed one.
+
+  What it costs: sherpa's paraformer has **no timestamp output and no hotword interface**. Timestamps are
+  rebuilt by running VAD (silero) over the audio and recognizing each speech run, then splitting sentences by
+  punctuation and distributing the run's duration by character count — honest to about a second, and the
+  first version (hard-cutting every 15 s) **dropped words at the seams**, so the runs are no longer cut.
+
+  Hotwords still work on the `funasr` backend (`ASR_BACKEND=funasr` in `start-asr.cmd`); on sherpa they are
+  ignored and the `terms` table is the fallback.
+- **The idle window is now 10 minutes, and the backstop moved to 30.** Cold start costs 30 s, so a 2-minute
+  window meant re-paying it constantly. The rule is now literally "10 minutes after the last run, with no new
+  run in between, stop it". `manage.idleMs` still overrides per machine. The server's own `ASR_IDLE_EXIT_S`
+  went from 600 s to 1800 s — a backstop must be *longer* than the caller's timer, otherwise it closes an
+  instance that is still in use.
+
+### Fixed
+
+- **`manage.start` pointing at a `.py` file silently did nothing.** Spawning a script on Windows is not a
+  command, so the service never came up and every run reported `asr-failed · ECONNREFUSED` — looking like
+  "auto-start is broken". `start` is now normalised: a `.py` path is wrapped with the interpreter from the
+  sibling `.venv` (falling back to `python`), so both `"D:/asr-local/server-sherpa.py"` and
+  `[python.exe, server-sherpa.py]` work.
+- **Hotwords were global, which makes them a negative bias on the wrong subject.** A list tuned for a lens
+  review (像差 焦段 光圈) was still being applied to a materials-science lecture. `video_storyboard` now takes
+  a per-call `hotwords` that overrides `asr.json`, the cache key includes it, and the README says plainly that
+  the global list is a default, not a policy.
+- **A login-gated video was read anyway, and the result was presented as if complete.** When Bilibili hides
+  the subtitle list from anonymous requests (`need_login_subtitle: true`), the pipeline used to report
+  "no subtitle" and move on — so the model ended up reading burned-in text off the pixels and calling it a
+  transcript.
+
+  Now the site's own flags (`need_login_subtitle`, `is_upower_*`) are carried through as `needLogin`, and both
+  the probe output and the storyboard manifest say so plainly:
+
+  ```
+  !! NEEDS LOGIN — this site hides subtitles from anonymous requests (auth=anonymous).
+     Do NOT guess the dialogue from burned-in text or scenes.
+     Ask the user for cookies before trusting any transcript…
+  ```
+
+  The point is to stop and ask, not to produce a confident answer from a source we never had.
+- **A console window popped up on every conversation, spewing `'wo' is not recognized`.** Two causes:
+  the ASR service was launched through `start-asr.cmd`, which allocates a console when the spawner is a GUI
+  app, and that `.cmd` had been rewritten with **LF line endings** (plus Chinese comments) — cmd.exe then
+  executed fragments of the `REM` lines as commands.
+
+  `manage.start` now accepts an array (`[exe, ...args]`) and the default config uses it, spawning
+  `python.exe server-sherpa.py` directly with `windowsHide` — no console, no batch parsing. `start-asr.cmd`
+  was rewritten with CRLF and ASCII-only text for the cases where a human runs it by hand.
+- **Stale cookies silently capped quality at 480p.** Reported against BV1HHns6oE4G: the manifest said the source
+  had no 1080p, while the browser clearly did. Measured with the user's own `bili-cookies.txt`:
+
+  ```
+  with cookies:      [480, 360]
+  without cookies:   [1080, 720, 480, 360]
+  ```
+
+  An expired or low-privilege `SESSDATA` makes Bilibili hand back a *shorter* format list — the plugin then
+  believed it and reported "no 1080p source", which was true of the request and false about the video.
+
+  Both the probe and the download path now go through one `probeSummary()`: when cookies are configured and
+  the result caps at ≤720p, it probes once more anonymously and keeps whichever list is taller, recording
+  why (`cookies 只允许 480p，匿名反而能拿到 1080p —— SESSDATA 可能过期…`). Verified: that URL now reports
+  max 1080, `zoomTarget` 1080 and a 1080p direct link.
+- **Bilibili's HTTP 567 now says what it is and tries once more.** 567 is their risk control, not a format
+  problem — most often a video that needs a signed-in session (1080P+, 会员/付费) or a rate-limit. Before, the
+  message was yt-dlp's raw text, which reads like a plugin bug.
+
+  **Docs gap this exposed**: `docs/SETUP.md` had a full cookies walkthrough all along, but the README — the
+  page people actually land on — never mentioned cookies at all. There is now a "needs a signed-in video"
+  section there: when it is needed, the three steps with Cookie-Editor, both config paths, the local-file
+  alternative, and the reminder that `SESSDATA` is a login credential.
+
+  Now: one automatic retry with a browser User-Agent, `Referer: https://www.bilibili.com/`, and
+  `--sleep-requests 1` (the retry only fires on 567/412, never on permanent errors); if it still fails, the
+  error names both ways out — a cookies.txt, or download the file and pass a local path. `--retries 3
+  --fragment-retries 5` also went into the base args, since CDN hiccups are routine.
+- **A partial download was wiped on failure, so every retry started from zero.** On a flaky connection the
+  media directory was removed (`rm -rf`) whenever yt-dlp exited non-zero — including the `.part` file that is
+  the whole point of resuming. Reported as "下到一半直接清零重新开始，而且下得更慢". Now the directory is
+  kept and `--continue` is explicit; stale parts are pruned by age instead.
+- **Progressive streams were never tried, so every Bilibili download was a DASH pair plus a merge.** The
+  selector jumped straight to `bv*+ba`. It now tries `b[height<=N]` (one file, no merge) first and falls back
+  to DASH — the scan copy only needs 360p, and a single stream is both faster and less to write.
+- **A slide deck that "looks the same on every page" produced no cuts at all.** With an absolute threshold,
+  a page turn that only changes a few characters scores 3–8 and disappears under any sane floor, so the
+  result fell back to equal intervals. Very static films (median score < 3 **and** fewer than 0.1 cuts/s) now
+  re-read with the relative-baseline detector (`spikeCuts`), which compares each frame with its local
+  neighbourhood instead of a global number. Measured: a slide where a small block appears went 0 → 1 cut;
+  the concept PV stayed at 44 (the guard is what keeps it from doubling — without the rate condition it went
+  44 → 88).
+
+  The absolute floor is 4, measured: on a 320×180 capture, changing ~3.5 % of the frame peaks at **5.7** and
+  ~8 % at **11.8** — both under any sane threshold (12–15), while a still frame's noise floor is 0.0–1.5.
+  Below ~1.5 % area the change is 1.6 and nothing can call that a cut; that limit is documented rather than
+  papered over.
+
+  An e2e test builds exactly that fixture (a block appearing at t=2 on an otherwise still frame) and asserts
+  the cut is found — the guard for "the function exists, the unit test is green, and nothing calls it".
+- **A long scan could let the idle timer shut the service down mid-run.** The timer is set when a run ends,
+  so a *new* run that spends more than `idleMs` scanning (before it ever asks for a transcript) would find the
+  endpoint dead and pay the 30 s cold start again. Any new run now renews the lease at entry, and the timer is
+  re-armed on exit even when that run never touched ASR.
+
+  The failure mode was a wasted restart, never a wrong result: the endpoint is probed before transcribing, and
+  a dead one is started before the request goes out.
+
+### Performance
+
+- **Transcription now runs while the scan runs.** It only needs the silence positions (from the 1–3 s audio
+  pass), not the cut points, so it was always safe to start early — it just never was. A 21-minute screen
+  recording went **202 s → 89 s** (scan 82 s, transcription finished inside it, frames 3.4 s). A 5-minute
+  window: 31.7 s with `transcript` at 0.03 s, i.e. fully overlapped.
+
+  Two things broke on the way and are fixed: the transcript block moved ahead of a `let asrLife` declaration
+  (`Cannot access before initialization`, which silently turned the first measurement into `asr-failed` while
+  still showing a fast time), and the block's `textInSilence` had to be returned rather than captured.
+- **Frame extraction runs in parallel.** Nine cells used to be nine sequential ffmpeg calls (each one seeks
+  and decodes a single frame). The loop is now plan → concurrent extract → assemble in order, at
+  `frameConcurrency` (default half the cores, capped at 8). Measured on a 90 s clip with 9 cells: **13.3 s at
+  1, 8.0 at 3, 6.5 at 5, 4.0 at 8**; whole run 18.0 → 12.2 s with transcription on. Cell order and the
+  sub-tiled fast-cut cells are unchanged (verified visually).
+
+  `result.timing` now carries per-phase seconds (`audio`/`scan`/`transcript`/`frames`) so the next slow
+  report can start from numbers instead of guesses. Caveat: part of the 202 → 89 s is the OS file cache
+  warming between the two runs — the honest structural gain is the ~58 s of transcription, not 113 s.
+
+### 为什么"相对基线"之前没生效
+
+## [0.4.2] — 2026-10-28
+
+0.4.1 shipped a broken tool and a key requirement nobody could justify. Both reported within an hour.
+
+### Fixed
+
+- **`video_locate` crashed on every call** in 0.4.1: `src/index.js` used `recallSegments` / `matchSegments` /
+  `formatMatches` without importing `./locate.js`, so the tool threw `ReferenceError` the moment it ran.
+  The registration test exercised storyboard and zoom but never locate — it does now, and that is the guard
+  for this exact class of mistake. Reported by @盲目吃鱼豹豹 with the one-line patch.
+
+- **A local ASR service no longer needs a `key`.** Any transcription without a key was skipped outright, so
+  self-hosted FunASR users were told "configure a key to actually listen" while their service was running fine
+  two ports away. Loopback base URLs (`127.0.0.1` / `localhost` / `[::1]`) now send no `Authorization` header
+  and are not gated on a key. Cloud endpoints still require one — without it we skip rather than 401.
+  Reported by @小观棋.
+
+### Docs
+
+- New README section on subtitles and ASR: which models we actually use (`paraformer-zh` + `fsmn-vad` +
+  `ct-punc` locally, `FunAudioLLM/SenseVoiceSmall` by default in the cloud), three ways to configure it
+  (local service / any OpenAI-compatible cloud / a finished SRT), the `/health` + `/shutdown` contract a
+  self-hosted server must honour, and the env vars.
+
+## [0.4.1] — 2026-10-28
+
+### Added
+
+- **The local ASR service can now be started on demand and stopped when the run ends.** Three hosts crashed
+  on 2026-10-28 because that service sat resident at ~6.8 GB of commit charge while Premiere was open.
+
+  Opt-in via `~/.dsh/asr.json`:
+
+  ```json
+  "manage": { "start": "D:/asr-local/start-asr.cmd", "idleMs": 120000, "waitMs": 180000 }
+  ```
+
+  With `manage.start` set: if the endpoint is down when a transcript is needed, it is started and awaited;
+  when the run finishes the plugin stops **the instance it started** after `idleMs` of quiet. An instance
+  someone else started is never touched — killing that would break whatever is using it.
+
+  The server also grew its own backstop: `ASR_IDLE_EXIT_S` (default 600 s, `start-asr.cmd` sets it) makes it
+  exit on its own when nothing calls it, so even a manually launched copy cannot sit there forever.
+
+  Measured end to end with the service down: one storyboard call took 42.2 s and came back with
+  `transcript: asr` instead of `asr-failed`. Cold start alone is **30.3 s** (spawn → `/health` ok); a warm
+  call adds nothing.
+
+  Stopping through a pid was the wrong idea: `start /b` returns a shell that exits immediately, so the pid we
+  held was already dead while python kept the memory. The service now exposes `POST /shutdown` and the plugin
+  asks it to exit — verified: request returns `true`, endpoint is gone 1.5 s later, and the idle timer stops it
+  on schedule (alive at 2 s, dead at 5 s with `idleMs: 3000`).
+
+## [0.4.1] — 2026-10-28
+
+Same story as 0.4.0, one level down: a broken thing that was invisible because it failed quietly.
+
+### Fixed
+
+- **A downloaded copy with no audio track said "no audio in the source".** On an anonymous Bilibili URL the
+  lowest track is video-only, so the whole audio path went silent — `transcript=no-audio`, empty envelope,
+  `meanLufs=null` — and the manifest implied the video itself had no sound. It now probes the downloaded file,
+  compares it with the formats the source advertised, and says which of the two it is:
+  *"no audio in this copy: the downloaded track is silent while the source has audio. Pass cookies, or download
+  locally"*. Reported by @xingyueDanYang with a reproduction.
+
+### Added
+
+- **`video_locate` — a phrase to a timestamp, with no frame decode.** It matches against the transcript
+  already produced by `video_storyboard` (or runs ASR once if there is none) and returns timestamped lines
+  best-first, ready to feed into `video_zoom`. Matching ignores punctuation, scores by longest common
+  substring, and prefers the shorter line on a tie ("记忆管理局" beats "记忆管理局的人来了"). Measured
+  **1 ms** on a 90 s clip. Note: needs speech — a music-only film has one empty segment and matches nothing.
+
+- **`<name>.evidence.json` next to every sheet.** Per cell: from/to, the frame timestamp, cut count, chars,
+  text. The manifest is prose for the model; this is for whoever has to verify it later without re-running.
+
+- **Manifest says the sheet is already in context** (one line, ~100 chars). Re-reading the same film used to
+  cost another 384 tokens per question; now the model is told to cite cells by number instead.
+  Net: +138 characters always, −384 per avoided re-read.
+
+### Fixed
+
+- **Vertical `video_zoom` picked the wrong track** (issue #9). `pickVideoFormat` filtered on `height`, which
+  on a 9:16 video is the *long* edge, so 1080x1920 was excluded and it fell back to 480x852 — while the
+  manifest claimed 1080p. It now compares the short edge.
+
+- **Tiled sub-frames bypassed the high-resolution direct link** (issue #9). `extractSubTile` read
+  `remote.url` / `remote.headers`, but the object carries `{uri, http:{userAgent, referer}}`, so every tile
+  silently fell back to the local 360p copy without counting a `frameFallback`. Now it uses the real fields,
+  falls back per tile on failure, and reports the fallback.
+
+- **Tiled cells no longer emit `frame@`.** A k×k cell contains k² moments; the old midpoint timestamp was
+  not the moment its picture was taken. The evidence sidecar records `frame_at: null` for those cells.
+
+## [0.4.0] — 2026-10-28
+
+The release where fast cuts finally count. Three things were true before this version and are not any more:
+
+1. **A shot shorter than 0.35 s could not be seen at all** — the scanner merged it away. Montage lives
+   entirely below that line, so every count on a fast-cut film was a floor, not a count.
+2. **A cell covering a montage showed exactly one frame.** The number "22 shots" was in the text and
+   nowhere in the picture.
+3. **Vertical video could not be downloaded.** Every portrait URL from Bilibili died on the format selector.
+
+Measured across ten content types (slide recording, surveillance, 2D animation, 3D short, studio news,
+handheld vlog, mobile-game ad, anime mashup, concept PV, 51-minute documentary), the per-second cut count
+went from a suspiciously uniform 0.22–0.27 to the range the content actually has: 0.08 for a slide deck,
+1.18 for a mashup.
+
+### Fixed
+
+- **Vertical Bilibili videos could not be downloaded at all.** yt-dlp reports a 9:16 video's formats as
+  360x640 / 480x852 / 720x1280, so `height` is the *long* edge and `bv*[height<=480]+ba/b[height<=480]`
+  matched nothing: every request ended in `Requested format is not available`. The selector now ends with an
+  unfiltered fallback (`.../bv*+ba/b`) and sorts by `res:` (yt-dlp's short-edge metric), so a portrait video
+  picks 480x852 instead of failing. Found by running the cross-domain test set (BV1BjxM69EHh).
+
+- **A cut-on-every-frame edit was counted as 9 shots when there were 23 — and could be dismissed as camera
+  motion.** Two causes: the one-frame gap was `1.02 / fps`, i.e. *longer* than a frame, so adjacent frames
+  merged; and `degraded: 'motion'` fired on any window with a short median shot and many high-scoring frames,
+  which is exactly what a per-frame flash looks like.
+
+  The gap is now chosen per window: `1.02 / fps` normally, `0.9 / fps` when the window's mean score says
+  nearly every frame changed. And `motion` now also requires a *smooth* score series (`cv < 0.4`) — a steady
+  pan varies a little every frame, a flash alternates wildly. Measured: per-frame clip 9 → **21** (true 23),
+  concept PV unchanged at 48, talking head 122 → 124.
+
+- The target-count cap added in 0.2.2 was applied even when the caller passed an explicit `threshold`.
+  The cap exists to stop tied frames from dragging in a cluster; applying it to an explicit threshold
+  overrode the caller's decision, so fast material could not be counted at all. Measured on a synthetic
+  3 s / 18-shot clip: `threshold: 5` returned 4 cuts instead of 16.
+
+### Changed
+
+- Sub-dividing a cell now also requires the cuts inside it to be *strong* (mean score ≥ 30), not just
+  frequent. A 2D line-art animation hits 0.7 shots/s with cuts that are almost invisible frame to frame,
+  so tiling produced nine nearly identical sub-frames — measured on a RETAS demo and on a mobile-game ad.
+  Real montages are unaffected (concept PV still tiles 4×4, the 108-anime mashup tiles four cells).
+
+### Added
+
+- **Fast cells are tiled into k×k sub-frames.** A cell covering a montage used to show one representative
+  frame, so "this stretch flashed nine times" was a number in the text and nothing else. When a cell's shot
+  density is high (≥ 0.7 shots/s, i.e. average shot ≤ 1.4 s) it is now rendered as a k×k contact sheet —
+  k = ceil(√shots), capped at 4 and by k×k sub-frame size ≥ 100×56 px. **Token cost is unchanged**: it is
+  still one image.
+
+  Measured on the concept PV at `cells: 6`: the three montage cells became 4×4 (16 frames each) while the
+  slow cells stayed full size, and the credits frame stayed readable. The talking-head clip's cells sit at
+  0.4–0.6 shots/s, so nothing is tiled there — the density gate is what keeps this from shredding ordinary
+  narrative pacing.
+
+  Two guards from measurement: sub-frames below 100×56 stop being distinguishable (110×61 was the floor in
+  the tiling experiment), and tiling costs k²−1 extra frame extractions, so each sheet has a budget of 32
+  extra frames and steps down k rather than blowing up render time.
+
+- **Cuts are now re-read per 2-second window instead of per "burst".** The earlier version only refined
+  windows that `findBursts` flagged, which fails exactly where it is needed most: when the whole film is
+  fast there is no burst, so nothing is refined at all (a 3 s / 18-shot clip returned 4 cuts). The window
+  test asks a local question instead — *can the coarse gap see what is in this window* — so it does not
+  depend on the film's average.
+
+  Both decisions run on the same per-frame scores, so this costs no extra decode (1.4 s vs 5 s when it was a
+  second ffmpeg pass). Adopt the fine reading only when it finds more cuts, is not classified `motion`, and
+  its cuts average ≥ 25 in score (real cuts average 59, a slow pan 18).
+
+  Measured: the all-fast synthetic clip **4 → 16 cuts** (true 17); the 12 s / 3 s / 10 s mix refines only the
+  flash; the concept PV goes 40 → 48 and the talking head 121 → 122, i.e. it now also catches real cuts the
+  0.35 s gap was merging (spot-checked one: 84.75 s really is a hard cut from the title card to the credits).
+
+- `video_storyboard({ scanGap })` — the minimum spacing between detected cuts, default 0.35 s. It is a
+  different knob from `minGap` (which merges cells). Fast material needs it: the same 3 s / 18-shot clip
+  yields **3 cuts at the default** and **16 cuts at `scanGap: 0.12`**. Until this, the scanner had no way
+  to observe anything under ~0.35 s per shot, which is exactly the range montage lives in.
+
+## [0.3.2] — 2026-10-28
+
+### Fixed
+
+- URL input now accepts yt-dlp's DASH output names such as `video.f100022.mp4`. The downloader
+  previously required the exact name `video.mp4` and failed with
+  `unexpected container: ... (expected mp4)` even though the file was a valid video. The file
+  is now renamed to the stable `video.mp4` before probing, so the cache and pipeline keep one
+  path contract. (Reported by @xingyueDanYang on `BV16VxM6dEeb`; fix from PR #8 by
+  @ggfgfgf-on.)
+- A download that produced **audio only** (`video.f30280.m4a`) is now rejected with an explicit
+  message instead of being renamed to `video.mp4`. The rename-by-file-name step above made this
+  failure mode possible: a valid file name is not a valid video stream.
+
+### Security
+
+- Transcript text is treated as untrusted data. Segments that look like instructions addressed
+  to the agent (for example "ignore previous instructions" or "stop the run / do not call tools")
+  are reported in `manifest.transcript.suspectInjection` with source, timestamp and a bounded
+  quote. The run continues; the manifest line explicitly says this is data, not a command.
+  This is evidence, not a content filter: false negatives are preferable to flagging ordinary
+  dialogue. (Reported by @xingyueDanYang.)
+- The video **title** is scanned too — it is external text that lands in the manifest, and it has
+  no timecode, so its `from`/`to` stay `null` instead of collapsing to second 0.
+
+## [0.3.1] — 2026-10-28
+
+### Host ffmpeg discovery
+
+`ffmpeg` / `ffprobe` are now resolved in this order: explicit `DSH_FFMPEG_PATH` /
+`DSH_FFPROBE_PATH` (or `FFMPEG_PATH` / `FFPROBE_PATH`), then `$DSH_HOME/tools/ffmpeg/bin`,
+`$DSH_HOME/bin`, the install-root `tools/ffmpeg/bin`, and finally `PATH`. A DSH install can
+therefore carry its own ffmpeg without every plugin re-implementing the lookup. Missing binaries
+still fail with a message that lists every path that was tried.
+
+### Manifest provenance
+
+The text manifest now records what produced the image, not just the timing:
+
+- `cell="WxH"` — the actual cell size, so a reader can tell whether subtitles were legible.
+- `tokens="N (DSH estimate)"` — explicitly an estimate; the host owns the real token count.
+- `ffmpeg="..."` — the ffmpeg build that decoded the frames.
+- `sha256="..."` — optional source hash, only with `sourceHash: true` / `--source-hash`; it reads
+  the whole file, so it is off by default. For a URL input it hashes the downloaded scan copy,
+  not the remote stream; the `source:` line still identifies the URL.
+- one `plan:` line with the measured inputs (`duration`, `scanThreshold`, `meanLufs`,
+  `speechRate`, `motion`, `cuts`, `hasSubtitle`) and the effective thresholds from
+  `PLAN_THRESHOLDS`. This is diagnostic output, not a new set of knobs.
+
+The JSON manifest (CLI `--manifest`) carries the same `provenance` and full `plan` object.
+
+### Fixes
+
+- Window-scoped transcript stats now count only the segments inside the window. A whole-film
+  `transcriptFile` previously divided the full character count by the window duration, which made
+  `charsPerSec` and the auto-plan's speech-rate classification wrong for every clipped window.
+- `video_zoom` now forwards `transcript` (and `sourceHash`) instead of silently falling back to
+  the pipeline defaults.
+
+## [0.3.0] — 2026-10-28
+
+**A URL is now a valid input.** Paste a Bilibili link (or anything yt-dlp supports) instead of a local
+path. Two decisions make this different from "download the video, then analyse it".
+
+### Two-tier fetching
+
+Scanning only needs structure — it gets downscaled to 64x36 — so it reads a 360p copy of the whole file
+(~7 MB per 5 min). Close-ups go back to the original stream, one frame at a time, and never touch disk.
+
+Why the low-res copy is downloaded at all instead of streamed: `pick:"sharp"` needs 3 candidate frames
+per segment, 27 random seeks for a 9-cell grid. Local: 9.6 s. Over HTTP: 51.8 s. Seven megabytes buys
+the right to jump around. Pure streaming would have been ~3.5x slower end to end.
+
+### `transcriptFile` — skip ASR when the source already has captions
+
+Accepts SRT, a plain `[{start,end,text}]` array, or Bilibili's `{body:[{from,to,content}]}`, detected
+automatically. On a 90 s clip this took a run from 16.9 s to **5.1 s**. It also works on files with no
+audio track, where the old logic fell through to `no-audio`.
+
+### Auth: probe first, complain only when it actually matters
+
+The first cut of this release hard-failed when no cookies were configured. Real use proved that wrong:
+`BV1BK411Q7ys` lists 360/480/720/1080 even anonymously, while `BV1fq4y1u7nC` tops out at 480p. Per-video
+and unpredictable, so refusing outright just made the agent hunt for a cookie it did not need.
+
+Now the plugin probes first and proceeds if the source already offers the target tier; only when it
+cannot does it record `degraded` plus a one-line note. The result always carries `auth`,
+`maxAvailable` and `availableHeights`, so nothing is hidden.
+
+Reading the browser's cookie jar is still not an option: Chromium 127+ stores `SESSDATA` with App-Bound
+Encryption (`v20`), which no external process can decrypt. `docs/SETUP.md` documents the file export.
+
+### Config moves to `~/.dsh/video.json`
+
+DSH Desktop cannot read environment variables set with `setx` — the ASR side already learned this the
+hard way. Precedence is now **tool argument > env var > `~/.dsh/video.json`**.
+
+```json
+{ "cookies": "D:/path/to/bili-cookies.txt", "scanHeight": 360, "zoomHeight": 1080 }
+```
+
+### Source capability, measured once
+
+A single `yt-dlp -J` (2.4 s, same cost as `-g`) returns every format, so `maxAvailable` /
+`availableHeights` are known before anything is downloaded and the zoom target is clamped to what the
+source actually has. Degradation is reported as `source-max-Np` (the video's own ceiling),
+`auth-limit` (a tier exists but this identity cannot reach it) or `fetch-degraded-Np` (the fetch
+succeeded but returned less) — three different situations that used to collapse into one vague field.
+
+### Manifest fixes for a real misread
+
+A model read a cell whose picture came from the cell's *end* as if it belonged to the cell's *start*,
+and shifted a whole segment 30 seconds early. Both causes were ours:
+
+- `alignCells` joined every ASR line with a space, discarding each line's own `from`. A cell spanning
+  09:38.9–10:20.5 that contained a real break at 10:09.4 looked like one continuous sentence. A
+  `[10:09.4]` marker is now inserted **at breaks only** (gap >= 1 s); stamping every line would eat a
+  quarter of the 120-character budget for nothing. Cells also carry `lines` and a `broken` flag.
+- The per-cell line never said when the frame was taken. `t_frame` was already in the data — it is now
+  rendered as `frame@01:13.59`, **only for `pick:"sharp"`** (mid is derivable; sharp's 3-candidate pick
+  is not). One line above the cells states that `frame@` is not the cell start.
+
+### Not done, deliberately
+
+Title-card detection. Probed with `blackdetect` on two real files: 8 minutes of an anime feature
+contains 10 black spans, 9 of them 0.3–1.7 s transitions. Without footage that actually has
+chapter cards there is no way to validate a detector, and a list of 10 mostly-wrong markers costs
+characters while teaching the model to distrust the index.
+
+### New parameters
+
+`transcriptFile`, `scanHeight` (360), `zoomHeight` (1080), `cookies`, `allowAnonymous` (now: suppress
+the warning, does not gate the fetch) — on the relevant tools.
+
+### Numbers
+
+| What | Time |
+|---|---|
+| `yt-dlp -J` (formats + metadata) | 2.4 s |
+| Download 360p, 4.5 MB | 4.5 s |
+| Scan + 9 cells (90 s clip) | 9.1 s |
+| Full run with ASR | 16.9 s |
+| Full run with `transcriptFile` | **5.1 s** |
+| 6-cell zoom re-read at 1080p | 5.3 s, 0 fallbacks |
+
+Tests 216 -> **273**. CI needs no network, no yt-dlp binary and no real cookies (a fake yt-dlp script
+covers the fetch path).
+
+### Also
+
+`docs/SETUP.md` + `SETUP.zh.md`: yt-dlp install, cookie export, environment variables, five-step
+verification, failure table. `bin/storyboard.mjs` accepts a URL plus `--cookies` / `--scan-height` /
+`--transcript-file`.
+
+
+## [0.2.2] — 2026-10-27
+
+Three things, all of them about *not* wasting the reader's attention.
+
+**`layout: 'strip'` is gone.** It was never worth its surface area: at equal cell count a grid canvas keeps
+a normal aspect ratio, so the cells are actually **bigger**, and the burned-in indices already settle the
+reading order. Removed the parameter, the 8:1 aspect guard and every doc mention.
+*Breaking for anyone who passed it — hence the version note below.*
+
+**Transcript vs silence consistency.** A line that sits >60 % inside a detected silence is counted and
+reported: either the speech is under the −40 dB gate, or the ASR invented it. Pure in-memory comparison —
+measured **0.009 ms** for 222 lines × 11 gaps, no extra ffmpeg call, one line in the text block when non-zero.
+
+**A real manual.** `docs/USAGE.md` + `docs/USAGE.zh.md`: three install paths, a 3-minute first run, every
+parameter of all three tools, six workflows, transcript backend config, cache, a troubleshooting table built
+from failures we actually hit, and a cost table.
+
+> Versioning note: removing a parameter is technically a breaking change (0.3.0). It is released as 0.2.2
+> because the parameter had existed for under an hour and nobody could have depended on it.
+
+## [0.2.1] — 2026-10-27
+
+Everything since 0.2.0, as one patch release (the whole set is polish and a few parameters, no
+architectural change).
+
+**"How fast is this cut?" is now a number in the text, not something the model has to count.**
+
+- Every cell line carries `cuts N` when that cell contains shot changes, and the header carries
+  `cuts="141 (avg 2.1s)"`. The yellow ticks on the footer strip already show *where*; this says *how many*.
+- `video_zoom` accepts `minGap` — re-read a fast-cut montage with `minGap: 0.4` and 0.3 s shots get their
+  own cell instead of being merged into a neighbour.
+- `video_zoom` accepts `layout: 'strip'` — one row of cells for a short window of continuous motion.
+  Falls back to a grid if the strip would exceed 12:1 (vision encoders resize by the long edge, so an
+  18:1 strip leaves every cell ~100 px wide).
+- `--batch` now scans once for cut points and **snaps window boundaries to real cuts** (`--no-snap` to
+  disable). A 92 s clip at 30 s windows lands on 0–30.88 / 30.88–59.88 / 59.88–92 instead of the clock.
+- Audio strip height is capped by cell height, so a 2476 px-wide strip layout no longer gets a 136 px
+  footer eating 37 % of the image.
+
+**Text index diet.** Measured on a 9-cell run: 2,892 → **2,171 characters (-25 %)**, with no
+information lost that the model can actually use.
+
+- per-cell transcript cap 180 → 120 chars (page with `cellRange` if you need the rest)
+- `sharp 479.7` removed from the text index — a bare number the model cannot interpret; still in the JSON
+  manifest
+- `image 1` dropped when there is only one sheet (it is pure redundancy); kept for multi-sheet
+
+**`detail: low | med | high`** — transcript budget per cell, and truncation now lands on a
+sentence boundary instead of cutting mid-word.
+
+Measured on a 9-cell run: `low` 1,521 chars · `med` 1,915 · `high` 3,031. Note that med is *cheaper*
+than the old hard-cut 120 (2,171) even though the budget is the same, because stopping at the last
+sentence end usually costs fewer characters than filling the quota.
+
+**`detail: low|med|high`** — transcript budget per cell (60/120/400), and truncation lands on a
+sentence boundary. Measured on 9 cells: 1,521 / 1,915 / 3,031 characters — `med` is 12 % cheaper than
+the old hard cut at the same budget.
+
+**Read order is explicit.** `video_probe` offers STRUCTURE (overview, spoils the ending) and SEQUENCE
+(window by window, never looks ahead) and refuses to choose.
+
+**Speed.** `--batch` reuses one full scan across windows (17.0 s → 9.0 s on a 92 s clip); `video_zoom`
+takes `minGap` and `layout: 'strip'`; audio strip height is capped by cell height.
+
+**Removed `layout: 'strip'`.** It was never worth its surface area: at equal cell count a grid canvas has a
+normal aspect ratio, so the cells are *bigger*, and the burned indices already settle the reading order. One
+fewer parameter to explain.
+
+**Transcript vs silence consistency.** A line that sits (>60 %) inside a detected silence is counted and
+reported: either the speech is below the −40 dB gate, or the ASR invented it. Pure in-memory comparison —
+measured **0.009 ms** for 222 lines × 11 gaps, no extra ffmpeg call.
+
+**Cut points are listed when they fit.** A window with ≤ 24 cuts now prints
+`cut points (3): 00:12.75, 00:16.13, 00:44.50` — exact times, because the strip can only be read to
+±2–4 s. Busy windows still get counts only, so an overview does not pay for a 141-entry list.
+
+**Silence blocks stay a backdrop.** Tried drawing them as an occluder (bars skipped inside silence); it
+looked like the waveform was chopped into solid grey bars, so it was reverted — grey is a backdrop *behind*
+the bars. The wording now says what a short bar actually means: "quiet for this film", not "silent".
+
+Tests 174 → **186**.
+
+## [0.2.0] — 2026-10-27
+
+**Text side now has a budget and paging.** A 2 h 35 min film produced a 75 KB index; the host folded 44 %
+of it into a disk overflow file that the model never read, so 44 minutes of dialogue were effectively lost.
+
+- `cellRange: [first, last]` — render only that slice of the index.
+- `textOnly: true` — return the index with **no image and no frame decode**; combined with the scan cache
+  it is ~0.8 s per page after the first call.
+- Per-cell transcript is capped at 180 chars by default (an overview needs "what is this stretch about";
+  ask for the cell range if you need the full text).
+- When the index exceeds its budget it now stops **on a cell boundary** and says which `cellRange` to
+  request next, instead of being silently folded into a file.
+- ASR results are cached by (file, window, endpoint, chunk size) — paging no longer re-runs recognition.
+
+**New: `video_probe`.** Container metadata in milliseconds — duration, resolution, rotation, audio and
+subtitle tracks — plus a suggested reading plan. Costs no image tokens, so the model can decide *how* to
+read a file before spending its first 384.
+
+**Content-type routing.** `suggest()` now sees speech rate and loudness, not just duration and motion:
+`meanLufs > −18 && charsPerSec < 1` marks a music-driven clip, which keeps the cell floor at 9 instead of
+letting the "dialogue carries the info" rule shrink it. Measured: concept PV 0.16 chars/s @ −14.2 LUFS
+fires; the tutorial at 5.59 chars/s and the narrative film at 2.05 do not.
+
+**Term dictionary.** `~/.dsh/asr.json` accepts `"terms": {"绘插": "彗差"}` — deterministic replacement over
+ASR output, single-pass (longest match first, no substring re-entry), with the replacement count reported.
+
+**Baseline.** `docs/BASELINE.md`: four clips measured end to end, plus the finding that loudness and speech
+rate move in opposite directions.
+
+## [0.1.0] — 2026-10-27
+
+First working release.
+
+**Tools**
+- `video_storyboard` — one addressable grid per clip: burned-in indices, per-cell timestamp ranges,
+  per-cell transcript, footer audio strip.
+- `video_zoom` — re-read a short window with fewer, larger cells.
+
+**Sampling**
+- HSV-weighted shot detection with a rate-based adaptive threshold (`3×p95` produced zero cuts on
+  fast-cut anime; targeting ≈1 cut per 1.5 s fixed it).
+- Cell placement follows local cut density; the timeline stays fully covered at a fixed token cost.
+- `--pick sharp` selects the frame with the highest Laplacian variance.
+- Segment merging honours a minimum gap that never exceeds the material's own granularity.
+
+**Audio**
+- EBU R128 loudness + silence detection, drawn as a strip on the same time axis as the cells.
+- Transcript: embedded subtitle track → OpenAI-compatible ASR → skip. Long windows are chunked
+  client-side (cut points snapped to silence) after a 299 s request was found to shift every
+  timestamp 13 s early.
+- Non-speech segments (ASR inventing words over music) are filtered and reported, never silently dropped.
+
+**Engineering**
+- Zero image library, zero font dependency; PNG is produced through ffmpeg's `image2pipe`.
+- Scan cache keyed by file + window + threshold (5-min clip: 13.4 s → 3.6 s on the second call).
+- Tool schema is verified against the host's real `defineTool` / `validateArgs`.
+- 154 tests: unit + ffmpeg end-to-end + host contract.
+
+[0.1.0]: https://github.com/SAOS-3624/dsh-video-storyboard/releases/tag/v0.1.0

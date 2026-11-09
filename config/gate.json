@@ -1,0 +1,13 @@
+{
+  "_note": "门禁阈值：决定一条视频值不值得上云总结",
+  "version": 7,
+  "updatedAt": "2026-11-02T03:04:18.792Z",
+  "sampleRatio": 0.25,
+  "lowDensity": 0.3,
+  "lowFacts": 2,
+  "passFacts": 6,
+  "passDensity": 0.75,
+  "passDensityMinDur": 300,
+  "passDisputes": 3,
+  "passPrefs": 0.8
+}

@@ -1,0 +1,28 @@
+FFmpeg 9.0.2 (Windows x64) — bundled third-party notice
+=====================================================
+
+Package:   ffmpeg-9.0.2-win64.zip
+Contents:  ffmpeg.exe, ffprobe.exe
+Version:   9.0.2-essentials_build-www.gyan.dev
+Build:     gcc 16.2.0 (Rev3, Built by MSYS2 project), static build
+Source:    https://ffmpeg.org/releases/ffmpeg-9.0.2.tar.xz
+Project:   https://ffmpeg.org/
+License:   GNU General Public License v3 (GPLv3), because this build was
+           configured with --enable-gpl --enable-version3.
+           Full license text: LICENSE-ffmpeg.txt
+           Full configure line and build notes: README-ffmpeg.txt
+
+Distribution: the zip is published as a GitHub Release asset, not stored
+in the git repository (it is ~74 MB; each .exe alone is ~105 MB, over
+GitHub's 100 MB per-file limit). The app downloads it on first use to
+<data directory>/tools/ and extracts it there.
+
+Redistribution / source offer
+-----------------------------
+This binary is redistributed unmodified as part of this project. In
+accordance with the GPL you can obtain the corresponding source code from
+the URL above (or from https://ffmpeg.org/download.html). If you prefer a
+different build, install ffmpeg yourself or point VD_FFMPEG / VD_FFPROBE
+at your own binary — the bundled copy is then ignored.
+
+No warranty; see the GPLv3 text for details.

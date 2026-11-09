@@ -1,0 +1,9 @@
+{
+  "currency": "CNY",
+  "daily": 1,
+  "weekly": 5,
+  "monthly": 20,
+  "warnPct": 80,
+  "overAction": "degrade",
+  "updatedAt": "2026-10-30T12:42:35.198Z"
+}

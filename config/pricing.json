@@ -1,0 +1,30 @@
+{
+  "model": "deepseek-flash",
+  "currency": "CNY",
+  "unit": "per_million_tokens",
+  "inMiss": 1,
+  "inHit": 0.02,
+  "out": 4,
+  "peakMultiplier": 2,
+  "peakHours": [
+    [
+      "09:00",
+      "12:00"
+    ],
+    [
+      "14:00",
+      "18:00"
+    ]
+  ],
+  "peakDays": [
+    1,
+    2,
+    3,
+    4,
+    5
+  ],
+  "source": "https://api-docs.deepseek.com/zh-cn/quick_start/pricing",
+  "sourceLabel": "官方文档 · 2026-10-30 自动获取",
+  "manualOverride": false,
+  "updatedAt": "2026-10-30T12:10:13.286Z"
+}

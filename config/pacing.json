@@ -1,0 +1,192 @@
+{
+  "version": 48,
+  "updatedAt": "2026-11-09T03:10:07.650Z",
+  "seed": 20261030,
+  "note": "抓取节奏（风控侧）与模型调用（成本侧）分开。heat = 24 小时权重，0=停，0.2=低，1=高。改完立即生效；所有抓取计划都带 seed，可复现。",
+  "heat": [
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0.2,
+    0.2,
+    0.2,
+    0.5,
+    0.5,
+    0.5,
+    1,
+    1,
+    0.5,
+    0.5,
+    0.5,
+    1,
+    1,
+    1,
+    0.5,
+    0.2,
+    0,
+    0
+  ],
+  "fetch": {
+    "intervalMedianSec": 60,
+    "tailMaxSec": 90,
+    "sessionMinMin": 15,
+    "sessionMaxMin": 40,
+    "sessionsPerDay": [
+      1,
+      3
+    ],
+    "dailyCandidates": 30,
+    "dailyWatch": 10,
+    "minGapSec": 3,
+    "cooldown352Sec": 1800
+  },
+  "guard": {
+    "serialOnly": true,
+    "nightStop": true,
+    "hourlyCap": 30,
+    "sameUpStreakPct": 5,
+    "weekendBoost": 1.5,
+    "dailyBudgetYuan": 1
+  },
+  "switches": {
+    "queueToOffPeak": true,
+    "weekendBoost": true,
+    "sameUpStreak": true
+  },
+  "runWindow": {
+    "mode": "trough",
+    "week": {
+      "0": [
+        {
+          "from": 300,
+          "to": 540
+        },
+        {
+          "from": 720,
+          "to": 840
+        },
+        {
+          "from": 1140,
+          "to": 1440
+        }
+      ],
+      "1": [
+        {
+          "from": 300,
+          "to": 540
+        },
+        {
+          "from": 720,
+          "to": 840
+        },
+        {
+          "from": 1140,
+          "to": 1440
+        }
+      ],
+      "2": [
+        {
+          "from": 300,
+          "to": 540
+        },
+        {
+          "from": 720,
+          "to": 840
+        },
+        {
+          "from": 1140,
+          "to": 1440
+        }
+      ],
+      "3": [
+        {
+          "from": 300,
+          "to": 540
+        },
+        {
+          "from": 720,
+          "to": 840
+        },
+        {
+          "from": 1140,
+          "to": 1440
+        }
+      ],
+      "4": [
+        {
+          "from": 300,
+          "to": 540
+        },
+        {
+          "from": 720,
+          "to": 840
+        },
+        {
+          "from": 1140,
+          "to": 1440
+        }
+      ],
+      "5": [
+        {
+          "from": 300,
+          "to": 540
+        },
+        {
+          "from": 720,
+          "to": 840
+        },
+        {
+          "from": 1140,
+          "to": 1440
+        }
+      ],
+      "6": [
+        {
+          "from": 300,
+          "to": 540
+        },
+        {
+          "from": 720,
+          "to": 840
+        },
+        {
+          "from": 1140,
+          "to": 1440
+        }
+      ]
+    },
+    "note": "按 API 低谷：工作日 00:00–09:00、12:00–14:00、18:00–24:00；周末 全天"
+  },
+  "dispatch": {
+    "enabled": false,
+    "tickSec": 60,
+    "gapSec": 5,
+    "candidateWatermark": 10,
+    "dailyEnlistMax": 20,
+    "dailyEnlist": 10,
+    "manualCap": 100,
+    "maxFails": 3,
+    "autoMaxPending": 30,
+    "note": "总开关默认关：装好、填好推送账号、确认要自动跑再打开。关着时手动「↑ 加视频 / 跑这条」仍然可用。"
+  },
+  "inbound": {
+    "activeSec": 20,
+    "idleSec": 60,
+    "nightSec": 180,
+    "activeWindowMin": 10,
+    "ack": true,
+    "maxReadPerTick": 5,
+    "note": "守候频率：刚有互动 activeWindowMin 分钟内用 activeSec，其余 idleSec，0–6 点 nightSec；ack=收到后先回一句（默认关）"
+  },
+  "permissions": {
+    "dm_push": "auto",
+    "at_push": "block",
+    "stranger": "ask",
+    "comment": "block",
+    "allowedStrangers": [],
+    "blockedStrangers": []
+  }
+}

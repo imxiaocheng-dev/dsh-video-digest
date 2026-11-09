@@ -1,0 +1,8 @@
+# dsh-video-digest —— 薄壳插件：只做「接到模型」这一件事
+#
+# 业务全部留在包根的 scripts\*.mjs + config\*.json，
+# 插件只负责：注册工具、贴链接时给一句旁白、每 5 分钟催一次入站轮询。
+# 所以改文案/改阈值/改档位都不需要重载插件。
+- insert:
+    - id: dsh-video-digest
+      name: 'dsh-video-digest'

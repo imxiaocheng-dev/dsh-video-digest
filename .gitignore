@@ -1,0 +1,26 @@
+# 数据与运行期产物（都在 DATA_ROOT；默认 ~/.dsh/video-digest，不在包目录）
+secrets/
+*.cookie
+*sessdata*
+cache/
+derived/
+out/
+runtime/
+logs/
+inbox/
+*.db
+*.db-wal
+*.db-shm
+_scratch/
+config/backup/
+*.log
+*.tmp
+node_modules/
+Thumbs.db
+desktop.ini
+.DS_Store
+__pycache__/
+*.pyc
+
+# 内置工具 zip 作为 GitHub Release 附件发布，不进仓库
+tools/win64/*.zip

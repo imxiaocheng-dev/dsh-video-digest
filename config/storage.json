@@ -1,0 +1,7 @@
+{
+  "version": 1,
+  "keepDays": 7,
+  "afterDone": "keep",
+  "sweepOnDone": true,
+  "note": "缓存保留天数：超过就把 cache/video + cache/frames 清掉（out/ 里的宫格图 sheet*.png 与总结 summary*.json 永远保留）。afterDone：keep=跑完不动 / drop-video=跑完删视频 / drop-cache=跑完删视频+帧。"
+}

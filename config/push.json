@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "updatedAt": "2026-11-09T03:10:07.650Z",
+  "note": "推送账号 = 接收总结的人（只存 uid + 昵称，不存 cookie）。前 3 位生效，第 4 位起待命；前面的超限或被删时自动补位。首次使用请在这里填自己的 B 站 uid。",
+  "guard": {
+    "maxAtPerComment": 3,
+    "maxPerWeek": 2,
+    "perVideo": 1,
+    "verifyAfterSend": true,
+    "stopAfterMiss": 2
+  },
+  "accounts": [],
+  "shape": {
+    "commentMax": 60,
+    "dmMax": 860,
+    "summaryMax": 900
+  }
+}

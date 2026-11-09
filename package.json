@@ -1,0 +1,67 @@
+{
+  "name": "dsh-video-digest",
+  "version": "0.2.0",
+  "private": false,
+  "type": "module",
+  "description": "把 B 站视频 → 宫格/字幕/事实卡/门禁/总结/私信的本地流水线接进 DeepSeek Harness：DSH 里丢一条链接，几十分钟后收到一条能直接读的私信总结。",
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "deepseek-harness",
+    "bilibili",
+    "video",
+    "summary",
+    "storyboard",
+    "ocr"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/imxiaocheng-dev/dsh-video-digest"
+  },
+  "homepage": "https://github.com/imxiaocheng-dev/dsh-video-digest#readme",
+  "engines": {
+    "node": ">=20",
+    "dsh": ">=0.2.0-rc.1"
+  },
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "index.js",
+    "client.js",
+    "cordis.patch.yml",
+    "panel/",
+    "scripts/",
+    "config/",
+    "tools/",
+    "vendor/",
+    "docs/",
+    "README.md",
+    "LICENSE"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": [],
+      "immediately": true
+    }
+  },
+  "peerDependencies": {
+    "@deepseek-ai/dsh-tools": "*",
+    "@deepseek-ai/dsh-llm": "*"
+  },
+  "peerDependenciesMeta": {
+    "@deepseek-ai/dsh-tools": {
+      "optional": true
+    },
+    "@deepseek-ai/dsh-llm": {
+      "optional": true
+    }
+  }
+}
