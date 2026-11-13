@@ -15,6 +15,8 @@
 - README 增加「常见问题」：TLS 拦截导致下载失败（`NODE_OPTIONS=--use-system-ca`）、OCR 降级原因、数据目录位置。
 - `scripts/digest.mjs`：S3.5 阶段改为调用调度模块；日志与 `ocrStats` 增加 `engine` 字段，
   失败时记录 `engines_tried`。
+- `scripts/panel_server.mjs`：`PANEL_VERSION` 改为从本包 `package.json` 读取（原来手写字面量，
+  发版时忘了改会出现「包是 0.2.1、面板显示 v0.2.0」）。
 - 提示词经验：让模型输出 `{"lines":[...]}` 而不是「请转录文字」——后者对着界面截图会改写成
   「图像描绘了…白色字体，位于顶部中央」这类描述，污染正文；脚本内置了 JSON 提示词，
   并用「先 json.loads、失败按顺序抽引号字符串」的容错解析接住它偶尔写坏的 JSON。

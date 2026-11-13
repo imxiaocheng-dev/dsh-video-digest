@@ -37,7 +37,13 @@ ensureData();  // 首次运行：自建 out/logs/cache/config/secrets/runtime �
 const ROOT = path.join(CODE, 'panel');
 const port = Number(process.argv[2] || 8791) || 8791;
 /* 面板版本号：唯一真源。meta / health / 版本变更自动快照都用它（bump 时只改这一行）。 */
-const PANEL_VERSION = 'v0.2.0';
+const PANEL_VERSION = (() => {
+  /* 不再手写版本号：从包自己的 package.json 读，避免和发布 tag 对不上（v0.2.1 曾出现 0.2.0 残留）。 */
+  for (const p of [path.join(CODE, 'package.json'), path.join(CODE, '..', 'package.json')]) {
+    try { const v = JSON.parse(fs.readFileSync(p, 'utf8')).version; if (v) return 'v' + v } catch (e) { /* 换下一个候选 */ }
+  }
+  return 'v0.0.0';
+})();
 
 /* ── 路由总表（最终版 v42）──────────────────────────────────────────────────
    一张表看清全部入口：没有重复路径、没有实验期死端点（/api/gui-port、/api/status、
