@@ -1,18 +1,19 @@
 {
   "name": "dsh-video-digest",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "private": false,
   "type": "module",
-  "description": "把 B 站视频 → 宫格/字幕/事实卡/门禁/总结/私信的本地流水线接进 DeepSeek Harness：DSH 里丢一条链接，几十分钟后收到一条能直接读的私信总结。",
+  "description": "把 B 站视频的「看」这件事拆成一条可核实的本地流水线：字幕 + 画面文字 + 宫格 + 弹幕 → 事实卡 → 门禁 → 总结 → 私信，接进 DeepSeek Harness（DSH）。画面文字支持 Xiaomi-OCR-0（Ollama）与 Windows 自带 OCR 双引擎，自动降级。",
   "keywords": [
+    "bilibili",
+    "deepseek-harness",
     "dsh",
     "dsh-plugin",
-    "deepseek-harness",
-    "bilibili",
-    "video",
-    "summary",
+    "ocr",
     "storyboard",
-    "ocr"
+    "summary",
+    "video",
+    "xiaomi-ocr"
   ],
   "license": "MIT",
   "repository": {

@@ -2,9 +2,11 @@
 // 复用 dsh-video-storyboard 的 scan/plan/density/sheet/pipeline（不重写），本文件只做 B 站接入、类型自适应与记账。
 import fs from 'node:fs';
 import path from 'node:path';
+import os from 'node:os';
 import { spawn, spawnSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 import { DATA_ROOT, CODE_ROOT, ensureData } from './lib/paths.mjs';
+import { runOcrStage } from './lib/ocr-engine.mjs';
 
 // 数据目录：台账/产物/缓存/配置/凭证都写这里（旧布局下就是包根，本机行为不变）
 ensureData();
@@ -47,12 +49,29 @@ const doOcr = depth === 'T3' || depth === 'T4' || args.includes('--ocr');
 const zoomK = Number((args.find((a) => a.startsWith('--zoom=')) || '').split('=')[1]) || (depth === 'T4' ? 2 : 0);
 // 弹幕默认开（0 token 抓取 + 本地聚合）：它是"哪一刻观众有反应"最便宜的线索
 const doDanmaku = !args.includes('--no-danmaku') && depth !== 'T0' && depth !== 'T1';
-const PY = (() => {
-  for (const c of [process.env.VD_PYTHON, 'python', 'python3', 'py'].filter(Boolean)) {
-    try { const r = spawnSync(c, ['--version'], { stdio: 'ignore' }); if (r && r.status === 0) return c; } catch { /* 试下一个 */ }
+// Python 解释器候选：OCR 的两个引擎对解释器要求不同——
+// xiaomi 只用标准库 urllib（任何 3.8+ 都行）；winsdk 需要与它编译时 ABI 一致的解释器
+// （本机实测：3.10 里 import winsdk 会报 _winrt DLL load failed，3.12 才正常）。
+// 所以这里给一串候选，OCR 调度会逐个试，谁跑通算谁的。
+const PY_CANDIDATES = (() => {
+  const list = [];
+  if (process.env.VD_PYTHON) list.push(process.env.VD_PYTHON);
+  // DSH 托管的运行时（~/.dsh/dsh-runtimes/*/dependencies/python/python.exe）
+  const home = process.env.DSH_HOME || path.join(os.homedir(), '.dsh');
+  try {
+    for (const d of fs.readdirSync(path.join(home, 'dsh-runtimes'))) {
+      const p = path.join(home, 'dsh-runtimes', d, 'dependencies', 'python', 'python.exe');
+      if (fs.existsSync(p)) list.push(p);
+    }
+  } catch { /* 没有 DSH 运行时就算了 */ }
+  list.push('python', 'python3', 'py');
+  const ok = [];
+  for (const c of [...new Set(list.filter(Boolean))]) {
+    try { const r = spawnSync(c, ['--version'], { stdio: 'ignore' }); if (r && r.status === 0) ok.push(c); } catch { /* 试下一个 */ }
   }
-  return 'python';
+  return ok.length ? ok : ['python'];
 })();
+const PY = PY_CANDIDATES[0];
 if (!bvid) { console.error('用法: node scripts/digest.mjs BV1xxxxxxxxx [--depth=T2|T3|T4] [--cells=N] [--cell=3,7]'); process.exit(2); }
 
 const dirs = {
@@ -420,14 +439,11 @@ if (doOcr && cellList.length) {
   }
   const listFile = path.join(frameDir, 'list.txt');
   fs.writeFileSync(listFile, frames.map((f) => f.p).join('\n'), 'utf8');
-  const { out } = await run(PY, [path.join(CODE_ROOT, 'scripts', 'ocr_winsdk.py'), listFile], {
-    env: { ...process.env, PYTHONIOENCODING: 'utf-8' },
+  // 引擎调度：--ocr-engine= / VD_OCR_ENGINE / config/ocr.json；auto = xiaomi 优先，失败降级 Windows OCR
+  // 两个引擎的输出契约一致（每行 {path,w,h,ms,lines:[{t}]}），下面的清洗逻辑原样复用。
+  const { byPath, engine: ocrEngineUsed, tried: ocrFail } = await runOcrStage({
+    py: PY, pys: PY_CANDIDATES, codeRoot: CODE_ROOT, root: ROOT, listFile, framesCount: frames.length, args, run, log,
   });
-  const byPath = new Map();
-  for (const line of out.split(/\r?\n/)) {
-    if (!line.trim()) continue;
-    try { const j = JSON.parse(line); byPath.set(j.path, j); } catch { /* 跳过 */ }
-  }
   const clean = (s) => String(s || '')
     .replace(/(?<=[\u4e00-\u9fff])\s+(?=[\u4e00-\u9fff])/g, '')
     .replace(/\s{2,}/g, ' ').trim();
@@ -509,12 +525,12 @@ if (doOcr && cellList.length) {
   const stamp = (s) => `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
   ocrText = rows.map((r) => `[${stamp(r.t)}] ${r.lines.join(' / ')}`).join('\n');
   const rawText = rawRows.map((r) => `[${stamp(r.t)}] ${r.lines.join(' / ')}`).join('\n');
-  ocrStats = { frames: frames.length, hits: rows.length, lines: (rows.flatMap(r => r.lines)).length, raw_lines: rawLines, clean_lines: seen.size, dropped, chars: ocrText.length, raw_chars: rawText.length, dedupe_skipped: dupSkipped, mode: ocrMode };
+  ocrStats = { engine: ocrEngineUsed, engines_tried: ocrFail, frames: frames.length, hits: rows.length, lines: (rows.flatMap(r => r.lines)).length, raw_lines: rawLines, clean_lines: seen.size, dropped, chars: ocrText.length, raw_chars: rawText.length, dedupe_skipped: dupSkipped, mode: ocrMode };
   ocrRows = rows;
   fs.writeFileSync(path.join(dirs.out, 'ocr.txt'), ocrText, 'utf8');
   fs.writeFileSync(path.join(dirs.out, 'ocr.raw.txt'), rawText, 'utf8');
   mark('ocr');
-  log(`[S3.5] OCR ${ocrStats.frames} 帧(2×放大) → ${ocrStats.hits} 帧有字 / ${ocrStats.lines} 行 / ${ocrStats.chars} 字（0 token）`
+  log(`[S3.5] OCR ${ocrStats.frames} 帧(2×放大) → ${ocrStats.hits} 帧有字 / ${ocrStats.lines} 行 / ${ocrStats.chars} 字（0 token · 引擎 ${ocrStats.engine || '无'}）`
     + (dupSkipped ? ` · 同画面跳过 ${dupSkipped} 帧` : '')
     + ` · 丢弃 烧字幕${dropped.subtitle} 水印${dropped.watermark} 重复${dropped.dup} 短行${dropped.short} 超限${dropped.capped} 噪声${dropped.noisy} / 原始 ${rawLines} 行 · 模式 ${ocrMode}`);
 }

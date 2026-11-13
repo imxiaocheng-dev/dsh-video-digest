@@ -6,7 +6,7 @@
 
 1. **选片**：按你的「视频偏好」搜 B 站新片，去重、按热度/时长/发布时间过滤，排进队列。
 2. **取流**：拿字幕（B 站 AI 字幕，免费）、抽帧、拼宫格图。
-3. **读画面**：Windows 本地 OCR 读画面内文字（可选，缺 Python 就跳过并标注「无画面文字」）。
+3. **读画面**：本地 OCR 读画面内文字（默认 Xiaomi-OCR-0，跑在本机 Ollama；没有就自动降级到 Windows 自带 OCR，两者都没有才跳过并标注「无画面文字」）。
 4. **读观众**：拉弹幕，统计争议点/信息点/提问点。
 5. **事实卡**：把逐段台词、画面文字、弹幕压成一份带时间码的材料（不送原始视频给模型）。
 6. **门禁**：本地判「这条值不值得花云端算力」，不值就跳过。
@@ -28,10 +28,25 @@
 | Node.js ≥ 20 | **必需** | 插件与脚本都是 ESM |
 | DeepSeek Harness ≥ 0.2.0-rc.1 | **必需** | 插件宿主（本包是 DSH bundle） |
 | `ffmpeg` + `ffprobe` | **Windows 自动获取** | 抽帧、转封装、取时长。Windows 版不再把 exe 放进仓库：首次运行会从 GitHub Release 下载 `ffmpeg-9.0.2-win64.zip`（约 74 MB）并解压到数据目录 `tools/`（需要联网一次）；下载慢或离线时，也可以手动下载该附件放到 `<数据目录>/tools/`。其它平台请自装到 PATH，或用环境变量 `VD_FFMPEG` / `VD_FFPROBE` 指定绝对路径 |
-| Python 3.10+ | 可选 | 只有 OCR 用。装了但缺 `winsdk` 时会跳过画面文字，不影响其它环节 |
-| `winsdk`（`pip install winsdk`） | 可选 | Windows 本地 OCR；没有就用 `scripts/ocr_batch.ps1`（PowerShell 5.1 自带引擎，慢一点） |
+| Python 3.10+ | 可选 | 只有 OCR 用。两个引擎都没有时跳过画面文字，不影响其它环节 |
+| [Ollama](https://ollama.com) + `xiaomi-ocr-0` | 可选（推荐） | 首选的画面文字引擎：`ollama pull longwayxu/xiaomi-ocr-0:bf16`（约 1.6 GB，社区 GGUF）。中英混排、金额、编号、阅读顺序都明显强于系统 OCR |
+| `winsdk`（`pip install winsdk`） | 可选（兜底） | Windows 自带 OCR，约 40 ms/帧；Ollama 不可用时自动降级到它。没有 `winsdk` 还能用 `scripts/ocr_batch.ps1`（PowerShell 5.1） |
 
-> OCR 只在 Windows 上可用（Windows.Media.Ocr）。其它平台会自动跳过画面文字。
+> 两个引擎的输出契约一致（每行一个 `{path,w,h,ms,lines:[{t}]}` 的 JSON），下游清洗逻辑完全一样；选哪个由 `config/ocr.json` 的 `engine`（`auto` / `xiaomi` / `winsdk`）决定，也可临时用 `--ocr-engine=` 或环境变量 `VD_OCR_ENGINE` 覆盖。`auto` 的顺序是「xiaomi → winsdk」。
+
+### 画面文字 OCR：为什么默认用 Xiaomi-OCR-0
+
+实测同一批 1080p 视频帧（`scripts/ocr_xiaomi.py` vs `scripts/ocr_winsdk.py`）：
+
+| 引擎 | 体积 | 1080p 单帧 | 典型表现 |
+|---|---|---|---|
+| Xiaomi-OCR-0（0.8B / Ollama） | 1.6 GB | 0.4–1.4 s（首次加载 38 s） | `VIDEO DIGEST · CASE FILE 052`、`值得看 28 / 一般 22 / 别看了 2`、`¥0.004` 全对；能读回 `Llama 3.x 70B 4 GB` 这类硬参数 |
+| Windows OCR（winsdk） | 0（系统自带） | 36–50 ms | `V I D E 0`、`ARCH]VAL DOSS1ER`、金额读成 `0 0 0 0`、整句丢数字 |
+
+- 它需要 GPU 才跑得快；纯 CPU 也能跑，只是慢。
+- 想让模型把文字「原样抄出来」，提示词要写成「输出 JSON `{"lines":[...]}`」——直接写「请转录文字」时，模型对着界面截图会改写成「图像描绘了…白色字体，位于顶部中央」这种描述。`scripts/ocr_xiaomi.py` 已经内置这个提示词，并兼容它偶尔写坏的 JSON。
+- 换模型：`VD_OCR_MODEL`；换地址：`VD_OCR_HOST`（默认 `http://127.0.0.1:11434`）。
+- 降级到 winsdk 时，解释器有讲究：`winsdk` 的 `_winrt` 是编译产物，只在与它 ABI 一致的解释器里能导入（实测 3.10 报 `DLL load failed`，3.12 正常）。脚本会依次试 `VD_PYTHON` → DSH 托管运行时 → PATH 上的 `python`，所以一般不用管；要强制指定就设 `VD_PYTHON`。
 
 ### 内置工具（GitHub Release 附件）
 
@@ -98,6 +113,8 @@ DSH 在线时面板由插件内置的 inproc 服务提供，不需要单独起�
 node scripts/pick.mjs --limit=15 --pages=2            # 选片（默认按发布时间取 30 天内新片）
 node scripts/runner.mjs --limit=2 --depth=T3          # 跑队列前 2 条
 node scripts/digest.mjs BV1xx411c7mD --depth=T2       # 只处理一条（取流/宫格/OCR/事实卡）
+node scripts/digest.mjs BV1xx411c7mD --depth=T3 --ocr-engine=winsdk   # 临时换 OCR 引擎
+ollama list | Select-String xiaomi                     # 看 OCR 模型在不在
 node scripts/gate.mjs  --bv=BV1xx411c7mD              # 单看门禁结论
 node scripts/summarize.mjs --bv=BV1xx411c7mD          # 生成总结（落 summary.cloud.json）
 node scripts/why.mjs  --bv=BV1xx411c7mD               # 「为什么值得看」一句话
@@ -107,6 +124,12 @@ node scripts/cache_sweep.mjs --dry                    # 看缓存占用与清理
 ```
 
 发送前建议先 DRY 看正文。`--send` 会真的发 B 站私信，且受 B 站频率限制与风控影响。
+
+## 常见问题
+
+- **首次运行提示下载 ffmpeg 失败**：Windows 会从本仓 Release 附件取 `ffmpeg-9.0.2-win64.zip`（先按当前版本 tag 找，404 时退回 `releases/latest`）。如果公司网络做了 TLS 拦截（Node 报 `UNABLE_TO_VERIFY_LEAF_SIGNATURE`），加环境变量 `NODE_OPTIONS=--use-system-ca` 让 Node 用系统根证书；也可以手动把 zip 放到数据目录 `tools/` 下，或用 `VD_FFMPEG` / `VD_FFPROBE` 直接指定已有二进制。
+- **OCR 走了 Windows 自带引擎**：说明 Ollama 没起、或没拉模型（`ollama pull longwayxu/xiaomi-ocr-0:bf16`）。日志里会打印原因，`--ocr-engine=winsdk` 可强制用系统 OCR。
+- **换机器后产物/台账不见了**：数据都在 `$DSH_HOME/video-digest`（可用 `VD_DATA` 覆盖），包目录只放代码，不复刻数据。
 
 ## 数据目录
 

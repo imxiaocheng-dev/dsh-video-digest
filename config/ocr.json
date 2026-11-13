@@ -1,0 +1,10 @@
+{
+  "note": "画面文字 OCR 引擎。auto = 先用 xiaomi（Xiaomi-OCR-0，Ollama，~0.5-1.2s/帧，中英混排/金额/阅读顺序更准），不可用时自动降级 winsdk（系统自带，~40ms/帧，但对 O/0、¥、小写字母容易出错）。也可用 --ocr-engine=xiaomi|winsdk 或环境变量 VD_OCR_ENGINE 临时覆盖。",
+  "engine": "auto",
+  "xiaomi": {
+    "model": "longwayxu/xiaomi-ocr-0:bf16",
+    "host": "http://127.0.0.1:11434",
+    "num_ctx": 8192,
+    "timeout_ms": 180000
+  }
+}

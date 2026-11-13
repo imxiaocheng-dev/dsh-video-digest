@@ -11,18 +11,25 @@ const EXE = process.platform === 'win32' ? '.exe' : '';
 const TOOLS_DIR = path.join(DATA_ROOT, 'tools');
 const ZIP_NAME = 'ffmpeg-9.0.2-win64.zip';
 
-/** 从 package.json 的 repository 推 Release 附件地址（避免把 owner 写死在代码里） */
-function releaseToolsUrl() {
+/**
+ * 从 package.json 的 repository 推 Release 附件地址（避免把 owner 写死在代码里）。
+ * 返回候选列表：先按当前版本的 tag 找，再退回 releases/latest ——
+ * 这样即使新版本还没挂附件（发布流程里先推 tag、后传 zip），也不会让首次运行直接失败。
+ */
+function releaseToolsUrls() {
   try {
     const pkg = JSON.parse(fs.readFileSync(path.join(CODE_ROOT, 'package.json'), 'utf8'));
     const repo = typeof pkg.repository === 'string' ? pkg.repository : (pkg.repository && pkg.repository.url) || '';
     const m = /github\.com[/:]([^/]+)\/([^/.#]+)/i.exec(repo);
-    if (!m) return '';
-    if (/^owner$/i.test(m[1])) return ''; // 占位地址，等维护者填真实仓库
+    if (!m) return [];
+    if (/^owner$/i.test(m[1])) return []; // 占位地址，等维护者填真实仓库
+    const base = `https://github.com/${m[1]}/${m[2]}/releases`;
+    const urls = [];
     const version = String(pkg.version || '').trim();
-    if (!version) return '';
-    return `https://github.com/${m[1]}/${m[2]}/releases/download/v${version}/${ZIP_NAME}`;
-  } catch { return ''; }
+    if (version) urls.push(`${base}/download/v${version}/${ZIP_NAME}`);
+    urls.push(`${base}/latest/download/${ZIP_NAME}`);
+    return urls;
+  } catch { return []; }
 }
 
 function log(msg) {
@@ -143,15 +150,17 @@ export async function ensureFfmpegTools() {
   let downloaded = false;
   if (!zip) {
     // 优先级：VD_TOOLS_URL / config toolsZipUrl > package.json repository 推导出的 Release 附件地址
-    const url = configToolsUrl() || releaseToolsUrl();
-    if (url) {
-      const dest = path.join(TOOLS_DIR, ZIP_NAME);
+    const configured = configToolsUrl();
+    const urls = configured ? [configured] : releaseToolsUrls();
+    const dest = path.join(TOOLS_DIR, ZIP_NAME);
+    for (const url of urls) {
       try {
         log(`首次运行：正在从 ${url} 下载 ffmpeg（约 74MB）…`);
         zip = await download(url, dest);
         downloaded = true;
+        break;
       } catch (e) {
-        log(`下载失败：${e && e.message}`);
+        log(`下载失败（${url}）：${e && e.message}`);
       }
     }
   }
